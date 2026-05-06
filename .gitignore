@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+.atlas/
 
 # debug
 npm-debug.log*

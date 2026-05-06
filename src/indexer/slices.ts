@@ -1,6 +1,17 @@
 import type { GraphEdge, GraphNode, GraphSlice, GraphSliceKind, GraphSummary, IssueSignal } from "@/lib/atlas/types";
 import { buildMermaid } from "@/indexer/mermaid";
 
+type SliceSelection = { nodes: GraphNode[]; edges: GraphEdge[]; issues: IssueSignal[] };
+
+type SliceSelector = (input: SliceInput) => SliceSelection;
+
+type SliceInput = {
+  target: string | null;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  issues: IssueSignal[];
+};
+
 export function buildGraphSlice(
   kind: GraphSliceKind,
   target: string | null,
@@ -27,73 +38,93 @@ function selectSlice(
   nodes: GraphNode[],
   edges: GraphEdge[],
   issues: IssueSignal[],
-): { nodes: GraphNode[]; edges: GraphEdge[]; issues: IssueSignal[] } {
-  if (kind === "overview") {
-    const overviewKinds = new Set(["project", "workspace", "feature", "surface", "route"]);
-    const ids = new Set(nodes.filter((node) => overviewKinds.has(node.kind)).map((node) => node.id));
-    const selectedNodes = nodes.filter((node) => ids.has(node.id));
-    const nodeIds = new Set(selectedNodes.map((node) => node.id));
-    return {
-      nodes: selectedNodes,
-      edges: edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target)),
-      issues,
-    };
-  }
+): SliceSelection {
+  return sliceSelectors[kind]({ target, nodes, edges, issues });
+}
 
-  if (kind === "workspace") {
-    const matchingNodes = target
-      ? nodes.filter((node) => node.id === target || node.metadata.workspaceKey === target)
-      : nodes.filter((node) => node.kind === "workspace");
-    return expandByOneHop(nodes, edges, issues, new Set(matchingNodes.map((node) => node.id)));
-  }
+const sliceSelectors: Record<GraphSliceKind, SliceSelector> = {
+  overview: overviewSlice,
+  workspace: workspaceSlice,
+  feature: featureSlice,
+  route: routeSlice,
+  dependencies: dependenciesSlice,
+  contracts: contractsSlice,
+  runtime: runtimeSlice,
+  duplicates: duplicatesSlice,
+  slop: slopSlice,
+  issues: issuesSlice,
+};
 
-  if (kind === "feature") {
-    const matchingNodes = nodes.filter((node) => node.featureId === target || node.id === target);
-    return expandByOneHop(nodes, edges, issues, new Set(matchingNodes.map((node) => node.id)));
-  }
+function overviewSlice({ nodes, edges, issues }: SliceInput): SliceSelection {
+  const overviewKinds = new Set(["project", "workspace", "feature", "surface", "route"]);
+  const selectedNodes = nodes.filter((node) => overviewKinds.has(node.kind));
+  const nodeIds = new Set(selectedNodes.map((node) => node.id));
 
-  if (kind === "route") {
-    const routeNode = nodes.find((node) => node.id === target || (node.kind === "route" && node.label === target));
-    return expandByOneHop(nodes, edges, issues, new Set(routeNode ? [routeNode.id] : []));
-  }
+  return {
+    nodes: selectedNodes,
+    edges: edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target)),
+    issues,
+  };
+}
 
-  if (kind === "dependencies") {
-    const seed = target ? nodes.find((node) => node.id === target || node.filePath === target) : nodes.find((node) => node.kind === "project");
-    return expandByOneHop(nodes, edges, issues, new Set(seed ? [seed.id] : []));
-  }
+function workspaceSlice({ target, nodes, edges, issues }: SliceInput): SliceSelection {
+  const matchingNodes = target
+    ? nodes.filter((node) => node.id === target || node.metadata.workspaceKey === target)
+    : nodes.filter((node) => node.kind === "workspace");
+  return expandByOneHop(nodes, edges, issues, idsForNodes(matchingNodes));
+}
 
-  if (kind === "contracts") {
-    const contractNode = target
-      ? nodes.find((node) => node.id === target || node.filePath === target)
-      : null;
-    const contractIds = contractNode
-      ? new Set([contractNode.id])
-      : new Set(nodes.filter((node) => node.kind === "type" || node.kind === "permission" || node.kind === "dependency").map((node) => node.id));
-    return expandByOneHop(nodes, edges, issues, contractIds);
-  }
+function featureSlice({ target, nodes, edges, issues }: SliceInput): SliceSelection {
+  const matchingNodes = nodes.filter((node) => node.featureId === target || node.id === target);
+  return expandByOneHop(nodes, edges, issues, idsForNodes(matchingNodes));
+}
 
-  if (kind === "runtime") {
-    const runtimeNode = target
-      ? nodes.find((node) => node.id === target || node.filePath === target)
-      : null;
-    const runtimeIds = runtimeNode
-      ? new Set([runtimeNode.id])
-      : new Set(nodes.filter((node) => node.kind === "runtime").map((node) => node.id));
-    return expandByOneHop(nodes, edges, issues, runtimeIds);
-  }
+function routeSlice({ target, nodes, edges, issues }: SliceInput): SliceSelection {
+  const routeNode = nodes.find((node) => node.id === target || (node.kind === "route" && node.label === target));
+  return expandByOneHop(nodes, edges, issues, idsForNodes(routeNode ? [routeNode] : []));
+}
 
-  if (kind === "duplicates") {
-    const duplicateIssues = issues.filter((issue) => issue.kind === "duplicate-logic");
-    return byNodeIds(nodes, edges, duplicateIssues, new Set(duplicateIssues.flatMap((issue) => issue.evidenceNodeIds)));
-  }
+function dependenciesSlice({ target, nodes, edges, issues }: SliceInput): SliceSelection {
+  const seed = target ? nodes.find((node) => node.id === target || node.filePath === target) : nodes.find((node) => node.kind === "project");
+  return expandByOneHop(nodes, edges, issues, idsForNodes(seed ? [seed] : []));
+}
 
-  if (kind === "slop") {
-    const slopIssues = issues.filter(isSlopIssue);
-    return byNodeIds(nodes, edges, slopIssues, new Set(slopIssues.flatMap((issue) => issue.evidenceNodeIds)));
-  }
+function contractsSlice({ target, nodes, edges, issues }: SliceInput): SliceSelection {
+  const contractNode = target ? nodes.find((node) => node.id === target || node.filePath === target) : null;
+  const contractNodes = contractNode ? [contractNode] : nodes.filter(isContractNode);
+  return expandByOneHop(nodes, edges, issues, idsForNodes(contractNodes));
+}
 
-  const selectedIssue = target ? issues.filter((issue) => issue.id === target) : issues;
-  return byNodeIds(nodes, edges, selectedIssue, new Set(selectedIssue.flatMap((issue) => issue.evidenceNodeIds)));
+function runtimeSlice({ target, nodes, edges, issues }: SliceInput): SliceSelection {
+  const runtimeNode = target ? nodes.find((node) => node.id === target || node.filePath === target) : null;
+  const runtimeNodes = runtimeNode ? [runtimeNode] : nodes.filter((node) => node.kind === "runtime");
+  return expandByOneHop(nodes, edges, issues, idsForNodes(runtimeNodes));
+}
+
+function duplicatesSlice({ nodes, edges, issues }: SliceInput): SliceSelection {
+  const duplicateIssues = issues.filter((issue) => issue.kind === "duplicate-logic");
+  return byIssueEvidence(nodes, edges, duplicateIssues);
+}
+
+function slopSlice({ nodes, edges, issues }: SliceInput): SliceSelection {
+  return byIssueEvidence(nodes, edges, issues.filter(isSlopIssue));
+}
+
+function issuesSlice({ target, nodes, edges, issues }: SliceInput): SliceSelection {
+  const selectedIssues = target ? issues.filter((issue) => issue.id === target) : issues;
+  return byIssueEvidence(nodes, edges, selectedIssues);
+}
+
+function idsForNodes(nodes: GraphNode[]): Set<string> {
+  return new Set(nodes.map((node) => node.id));
+}
+
+function byIssueEvidence(nodes: GraphNode[], edges: GraphEdge[], issues: IssueSignal[]): SliceSelection {
+  return byNodeIds(nodes, edges, issues, new Set(issues.flatMap((issue) => issue.evidenceNodeIds)));
+}
+
+function isContractNode(node: GraphNode): boolean {
+  return node.kind === "type" || node.kind === "permission" || node.kind === "dependency";
 }
 
 function expandByOneHop(

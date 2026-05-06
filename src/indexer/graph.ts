@@ -35,6 +35,41 @@ type UnresolvedImportRecord = {
   specifier: string;
 };
 
+type GraphCounters = {
+  internalImportCount: number;
+  externalDependencyCount: number;
+  unresolvedImportCount: number;
+  componentCount: number;
+  hookCount: number;
+  typeCount: number;
+  permissionCount: number;
+  runtimePortCount: number;
+};
+
+type GraphBuildState = {
+  nodes: Map<string, GraphNode>;
+  edges: Map<string, GraphEdge>;
+  knownFiles: Set<string>;
+  featureFileCounts: Map<string, number>;
+  workspacesByPath: Map<string, ReturnType<typeof workspaceFromPath>>;
+  workspaceFileCounts: Map<string, number>;
+  routeByPath: Map<string, AnalyzedFile["routes"][number]>;
+  routes: AnalyzedFile["routes"];
+  projectNodeId: string;
+  counters: GraphCounters;
+  unresolvedImports: UnresolvedImportRecord[];
+};
+
+type FileGraphContext = {
+  featureId: string;
+  workspace: ReturnType<typeof workspaceFromPath>;
+  workspaceId: string;
+  surfaceId: string;
+  sourceFileId: string;
+  featureFileCount: number;
+  workspaceFileCount: number;
+};
+
 export function buildProjectGraph(
   project: ProjectConfig,
   scanId: string,
@@ -42,335 +77,23 @@ export function buildProjectGraph(
   resolverConfig: ImportResolverConfig,
   runtimeProfile: RuntimeProfile,
 ): ScanResult {
-  const nodes = new Map<string, GraphNode>();
-  const edges = new Map<string, GraphEdge>();
-  const knownFiles = new Set(files.map((file) => file.path));
-  const featureFileCounts = countBy(files.map((file) => file.featureId));
-  const workspacesByPath = new Map(files.map((file) => [file.path, workspaceFromPath(file.path)]));
-  const workspaceFileCounts = countBy([...workspacesByPath.values()].map((workspace) => workspace.key));
-  const routes = files.flatMap((file) => file.routes);
-  const routeByPath = new Map(routes.map((route) => [route.path, route]));
-  const projectNodeId = stableId("project", project.id);
-  let internalImportCount = 0;
-  let externalDependencyCount = 0;
-  let unresolvedImportCount = 0;
-  let componentCount = 0;
-  let hookCount = 0;
-  let typeCount = 0;
-  let permissionCount = 0;
-  let runtimePortCount = 0;
-  const unresolvedImports: UnresolvedImportRecord[] = [];
-
-  upsertNode(nodes, {
-    id: projectNodeId,
-    kind: "project",
-    label: project.name,
-    filePath: null,
-    featureId: null,
-    metadata: { rootPath: project.rootPath },
-  });
+  const state = createGraphBuildState(project, files);
 
   for (const file of files) {
-    const featureId = featureNodeId(file.featureId);
-    const workspace = workspacesByPath.get(file.path);
-    if (!workspace) {
-      throw new Error(`Missing workspace for ${file.path}`);
-    }
-    const workspaceId = workspaceNodeId(workspace.key);
-    const surfaceId = surfaceNodeId(file.surface);
-    const sourceFileId = fileNodeId(file.path);
-    const featureFileCount = featureFileCounts.get(file.featureId);
-    if (featureFileCount === undefined) {
-      throw new Error(`Missing feature count for ${file.featureId}`);
-    }
-    const workspaceFileCount = workspaceFileCounts.get(workspace.key);
-    if (workspaceFileCount === undefined) {
-      throw new Error(`Missing workspace count for ${workspace.key}`);
-    }
-
-    upsertNode(nodes, {
-      id: workspaceId,
-      kind: "workspace",
-      label: workspace.label,
-      filePath: null,
-      featureId: null,
-      metadata: { workspaceKey: workspace.key, workspaceKind: workspace.kind, workspaceName: workspace.name, fileCount: workspaceFileCount },
-    });
-    upsertNode(nodes, {
-      id: featureId,
-      kind: "feature",
-      label: file.featureId,
-      filePath: null,
-      featureId: file.featureId,
-      metadata: { fileCount: featureFileCount },
-    });
-    upsertNode(nodes, {
-      id: surfaceId,
-      kind: "surface",
-      label: file.surface,
-      filePath: null,
-      featureId: null,
-      metadata: {},
-    });
-    upsertNode(nodes, {
-      id: sourceFileId,
-      kind: "file",
-      label: file.path.split("/").at(-1) ?? file.path,
-      filePath: file.path,
-      featureId: file.featureId,
-      metadata: {
-        path: file.path,
-        surface: file.surface,
-        language: file.language,
-        size: file.size,
-        imports: file.imports.length,
-        exports: file.exports.length,
-        workspaceKey: workspace.key,
-        workspaceKind: workspace.kind,
-        workspaceName: workspace.name,
-        typeDeclarations: file.typeDeclarations.length,
-        permissions: file.permissions.length,
-      },
-    });
-
-    upsertEdge(edges, projectNodeId, workspaceId, "contains", { flow: "workspace" });
-    upsertEdge(edges, projectNodeId, featureId, "contains", {});
-    upsertEdge(edges, projectNodeId, surfaceId, "contains", {});
-    upsertEdge(edges, workspaceId, sourceFileId, "contains", { flow: "workspace" });
-    upsertEdge(edges, featureId, sourceFileId, "contains", {});
-    upsertEdge(edges, surfaceId, sourceFileId, "contains", {});
-
-    for (const route of file.routes) {
-      const routeId = routeNodeId(route.path, route.kind);
-      upsertNode(nodes, {
-        id: routeId,
-        kind: "route",
-        label: route.path,
-        filePath: file.path,
-        featureId: file.featureId,
-        metadata: { routeKind: route.kind },
-      });
-      upsertEdge(edges, featureId, routeId, "owns", { routeKind: route.kind });
-      upsertEdge(edges, routeId, sourceFileId, "implements", {});
-    }
-
-    for (const component of file.components) {
-      componentCount += 1;
-      const componentId = stableId("component", `${file.path}:${component}`);
-      upsertNode(nodes, {
-        id: componentId,
-        kind: "component",
-        label: component,
-        filePath: file.path,
-        featureId: file.featureId,
-        metadata: {},
-      });
-      upsertEdge(edges, sourceFileId, componentId, "declares", {});
-    }
-
-    for (const hook of file.hooks) {
-      hookCount += 1;
-      const hookId = stableId("hook", `${file.path}:${hook}`);
-      upsertNode(nodes, {
-        id: hookId,
-        kind: "hook",
-        label: hook,
-        filePath: file.path,
-        featureId: file.featureId,
-        metadata: {},
-      });
-      upsertEdge(edges, sourceFileId, hookId, "declares", {});
-    }
-
-    for (const typeDeclaration of file.typeDeclarations) {
-      typeCount += 1;
-      const nodeId = typeNodeId(file.path, typeDeclaration);
-      upsertNode(nodes, {
-        id: nodeId,
-        kind: "type",
-        label: typeDeclaration,
-        filePath: file.path,
-        featureId: file.featureId,
-        metadata: { workspaceKey: workspace.key },
-      });
-      upsertEdge(edges, sourceFileId, nodeId, "declares", { contract: "type", health: "good", flow: "outflow" });
-    }
-
-    for (const permission of permissionsForFile(file)) {
-      permissionCount += 1;
-      const nodeId = permissionNodeId(permission.kind, permission.source);
-      const health = permissionHealth(file, permission);
-      upsertNode(nodes, {
-        id: nodeId,
-        kind: "permission",
-        label: permission.source,
-        filePath: null,
-        featureId: null,
-        metadata: { permissionKind: permission.kind },
-      });
-      upsertEdge(edges, sourceFileId, nodeId, "uses", {
-        permissionKind: permission.kind,
-        source: permission.source,
-        line: permission.line,
-        health,
-        flow: "outflow",
-      });
-    }
-
-    for (const port of file.ports) {
-      runtimePortCount += 1;
-      const runtimeId = runtimeNodeId(`source-port:${file.path}:${port.port}:${port.kind}:${port.line}`);
-      upsertNode(nodes, {
-        id: runtimeId,
-        kind: "runtime",
-        label: `:${port.port}`,
-        filePath: file.path,
-        featureId: file.featureId,
-        metadata: { runtimeKind: "port", port: port.port, source: port.source, line: port.line, workspaceKey: workspace.key },
-      });
-      upsertEdge(edges, sourceFileId, runtimeId, "configures", {
-        port: port.port,
-        source: port.source,
-        line: port.line,
-        health: "good",
-        flow: "runtime",
-      });
-    }
-
-    for (const imported of file.imports) {
-      const resolved = resolveImportPath(project.rootPath, file.path, imported.specifier, knownFiles, resolverConfig);
-      if (resolved) {
-        internalImportCount += 1;
-        upsertEdge(edges, sourceFileId, fileNodeId(resolved), "imports", {
-          specifier: imported.specifier,
-          importKind: imported.kind,
-          importMode: imported.mode,
-          health: "good",
-          flow: imported.mode === "type" ? "type" : "inflow",
-        });
-        continue;
-      }
-
-      if (isProjectLocalImport(imported.specifier, resolverConfig)) {
-        unresolvedImportCount += 1;
-        unresolvedImports.push({ filePath: file.path, specifier: imported.specifier });
-        const unresolvedDependencyId = dependencyNodeId(`unresolved:${imported.specifier}`);
-        upsertNode(nodes, {
-          id: unresolvedDependencyId,
-          kind: "dependency",
-          label: imported.specifier,
-          filePath: null,
-          featureId: null,
-          metadata: { external: false, unresolved: true },
-        });
-        upsertEdge(edges, sourceFileId, unresolvedDependencyId, "imports", {
-          specifier: imported.specifier,
-          importKind: imported.kind,
-          importMode: imported.mode,
-          unresolved: true,
-          health: "broken",
-          flow: imported.mode === "type" ? "type" : "inflow",
-        });
-      } else {
-        externalDependencyCount += 1;
-        const dependencyId = dependencyNodeId(imported.specifier);
-        upsertNode(nodes, {
-          id: dependencyId,
-          kind: "dependency",
-          label: imported.specifier,
-          filePath: null,
-          featureId: null,
-          metadata: { external: true },
-        });
-        upsertEdge(edges, sourceFileId, dependencyId, "imports", {
-          specifier: imported.specifier,
-          importKind: imported.kind,
-          importMode: imported.mode,
-          health: "good",
-          flow: imported.mode === "type" ? "type" : "inflow",
-        });
-      }
-    }
-
-    for (const apiCall of file.apiCalls) {
-      const targetRoute = routeByPath.get(apiCall);
-      if (targetRoute) {
-        upsertEdge(edges, sourceFileId, routeNodeId(targetRoute.path, targetRoute.kind), "calls", { apiCall, health: "good", flow: "outflow" });
-      } else {
-        const missingRouteId = routeNodeId(apiCall, "missing-api");
-        upsertNode(nodes, {
-          id: missingRouteId,
-          kind: "route",
-          label: apiCall,
-          filePath: null,
-          featureId: file.featureId,
-          metadata: { routeKind: "missing-api", unresolved: true },
-        });
-        upsertEdge(edges, sourceFileId, missingRouteId, "calls", { apiCall, health: "broken", flow: "outflow" });
-      }
-    }
+    addFileToGraph(state, project, file, resolverConfig);
   }
 
-  addRuntimeProfileGraph(nodes, edges, projectNodeId, runtimeProfile);
-  runtimePortCount += runtimeProfile.ports.length;
+  addRuntimeProfileGraph(state.nodes, state.edges, state.projectNodeId, runtimeProfile);
+  state.counters.runtimePortCount += runtimeProfile.ports.length;
 
-  const graphNodes = [...nodes.values()];
-  const graphEdges = [...edges.values()];
+  const graphEdges = [...state.edges.values()];
   const issues = detectIssues(files, graphEdges);
-  issues.push(...detectUnresolvedImportIssues(unresolvedImports));
+  issues.push(...detectUnresolvedImportIssues(state.unresolvedImports));
   issues.push(...detectSourceRuntimePortMismatches(files, runtimeProfile.ports));
   issues.push(...runtimeDiagnosticsToIssues(runtimeProfile.diagnostics));
-
-  for (const issue of issues) {
-    const nodeId = issueNodeId(issue.id);
-    graphNodes.push({
-      id: nodeId,
-      kind: "issue",
-      label: issue.title,
-      filePath: issue.filePaths[0] ?? null,
-      featureId: null,
-      metadata: {
-        issueKind: issue.kind,
-        severity: issue.severity,
-        confidence: issue.confidence,
-      },
-    });
-
-    for (const evidenceNodeId of issue.evidenceNodeIds) {
-      const health = issue.severity === "critical" ? "broken" : "warning";
-      graphEdges.push({
-        id: stableId("edge", `${nodeId}:flags:${evidenceNodeId}`),
-        source: nodeId,
-        target: evidenceNodeId,
-        kind: issue.kind === "duplicate-logic" ? "duplicates" : issue.kind === "dependency-cycle" ? "cycles" : "flags",
-        metadata: { issueId: issue.id, health, flow: "signal" },
-      });
-    }
-  }
-
-  const summary: GraphSummary = {
-    projectName: project.name,
-    fileCount: files.length,
-    workspaceCount: workspaceFileCounts.size,
-    featureCount: new Set(files.map((file) => file.featureId)).size,
-    routeCount: routes.length,
-    internalImportCount,
-    externalDependencyCount,
-    unresolvedImportCount,
-    componentCount,
-    hookCount,
-    typeCount,
-    permissionCount,
-    runtimePortCount,
-    startupIssueCount: issues.filter((issue) => issue.kind === "startup-problem" || issue.kind === "port-mismatch" || issue.kind === "env-contract-risk").length,
-    timingIssueCount: issues.filter((issue) => issue.kind === "timer-without-cleanup" || issue.kind === "suspicious-async-effect" || issue.kind === "stale-closure-risk" || issue.kind === "unguarded-parallel-async").length,
-    brokenEdgeCount: graphEdges.filter((edge) => edge.metadata.health === "broken").length,
-    warningEdgeCount: graphEdges.filter((edge) => edge.metadata.health === "warning").length,
-    edgeCount: graphEdges.length,
-    issueCount: issues.length,
-    scanId,
-    scannedAt: new Date().toISOString(),
-  };
+  const graphNodes = [...state.nodes.values()];
+  addIssueEvidenceGraph(graphNodes, graphEdges, issues);
+  const summary = buildGraphSummary(project, scanId, files, state, graphEdges, issues);
 
   return {
     files,
@@ -379,6 +102,444 @@ export function buildProjectGraph(
     issues,
     summary,
   };
+}
+
+function createGraphBuildState(project: ProjectConfig, files: AnalyzedFile[]): GraphBuildState {
+  const routes = files.flatMap((file) => file.routes);
+  const workspacesByPath = new Map(files.map((file) => [file.path, workspaceFromPath(file.path)]));
+  const state: GraphBuildState = {
+    nodes: new Map(),
+    edges: new Map(),
+    knownFiles: new Set(files.map((file) => file.path)),
+    featureFileCounts: countBy(files.map((file) => file.featureId)),
+    workspacesByPath,
+    workspaceFileCounts: countBy([...workspacesByPath.values()].map((workspace) => workspace.key)),
+    routeByPath: new Map(routes.map((route) => [route.path, route])),
+    routes,
+    projectNodeId: stableId("project", project.id),
+    counters: emptyGraphCounters(),
+    unresolvedImports: [],
+  };
+
+  upsertNode(state.nodes, {
+    id: state.projectNodeId,
+    kind: "project",
+    label: project.name,
+    filePath: null,
+    featureId: null,
+    metadata: { rootPath: project.rootPath },
+  });
+
+  return state;
+}
+
+function emptyGraphCounters(): GraphCounters {
+  return {
+    internalImportCount: 0,
+    externalDependencyCount: 0,
+    unresolvedImportCount: 0,
+    componentCount: 0,
+    hookCount: 0,
+    typeCount: 0,
+    permissionCount: 0,
+    runtimePortCount: 0,
+  };
+}
+
+function addFileToGraph(
+  state: GraphBuildState,
+  project: ProjectConfig,
+  file: AnalyzedFile,
+  resolverConfig: ImportResolverConfig,
+) {
+  const context = fileGraphContext(state, file);
+  addFileOwnershipGraph(state, file, context);
+  addRouteGraph(state, file, context);
+  addSymbolGraph(state, file, context);
+  addTypeGraph(state, file, context);
+  addPermissionGraph(state, file, context);
+  addSourcePortGraph(state, file, context);
+  addImportGraph(state, project, file, context, resolverConfig);
+  addApiCallGraph(state, file, context);
+}
+
+function fileGraphContext(state: GraphBuildState, file: AnalyzedFile): FileGraphContext {
+  const workspace = requiredValue(state.workspacesByPath.get(file.path), `Missing workspace for ${file.path}`);
+  return {
+    featureId: featureNodeId(file.featureId),
+    workspace,
+    workspaceId: workspaceNodeId(workspace.key),
+    surfaceId: surfaceNodeId(file.surface),
+    sourceFileId: fileNodeId(file.path),
+    featureFileCount: requiredValue(state.featureFileCounts.get(file.featureId), `Missing feature count for ${file.featureId}`),
+    workspaceFileCount: requiredValue(state.workspaceFileCounts.get(workspace.key), `Missing workspace count for ${workspace.key}`),
+  };
+}
+
+function addFileOwnershipGraph(state: GraphBuildState, file: AnalyzedFile, context: FileGraphContext) {
+  upsertNode(state.nodes, {
+    id: context.workspaceId,
+    kind: "workspace",
+    label: context.workspace.label,
+    filePath: null,
+    featureId: null,
+    metadata: { workspaceKey: context.workspace.key, workspaceKind: context.workspace.kind, workspaceName: context.workspace.name, fileCount: context.workspaceFileCount },
+  });
+  upsertNode(state.nodes, {
+    id: context.featureId,
+    kind: "feature",
+    label: file.featureId,
+    filePath: null,
+    featureId: file.featureId,
+    metadata: { fileCount: context.featureFileCount },
+  });
+  upsertNode(state.nodes, {
+    id: context.surfaceId,
+    kind: "surface",
+    label: file.surface,
+    filePath: null,
+    featureId: null,
+    metadata: {},
+  });
+  upsertFileNode(state, file, context);
+  addOwnershipEdges(state, context);
+}
+
+function upsertFileNode(state: GraphBuildState, file: AnalyzedFile, context: FileGraphContext) {
+  upsertNode(state.nodes, {
+    id: context.sourceFileId,
+    kind: "file",
+    label: file.path.split("/").at(-1) ?? file.path,
+    filePath: file.path,
+    featureId: file.featureId,
+    metadata: {
+      path: file.path,
+      surface: file.surface,
+      language: file.language,
+      size: file.size,
+      imports: file.imports.length,
+      exports: file.exports.length,
+      workspaceKey: context.workspace.key,
+      workspaceKind: context.workspace.kind,
+      workspaceName: context.workspace.name,
+      typeDeclarations: file.typeDeclarations.length,
+      permissions: file.permissions.length,
+    },
+  });
+}
+
+function addOwnershipEdges(state: GraphBuildState, context: FileGraphContext) {
+  upsertEdge(state.edges, state.projectNodeId, context.workspaceId, "contains", { flow: "workspace" });
+  upsertEdge(state.edges, state.projectNodeId, context.featureId, "contains", {});
+  upsertEdge(state.edges, state.projectNodeId, context.surfaceId, "contains", {});
+  upsertEdge(state.edges, context.workspaceId, context.sourceFileId, "contains", { flow: "workspace" });
+  upsertEdge(state.edges, context.featureId, context.sourceFileId, "contains", {});
+  upsertEdge(state.edges, context.surfaceId, context.sourceFileId, "contains", {});
+}
+
+function addRouteGraph(state: GraphBuildState, file: AnalyzedFile, context: FileGraphContext) {
+  for (const route of file.routes) {
+    const routeId = routeNodeId(route.path, route.kind);
+    upsertNode(state.nodes, {
+      id: routeId,
+      kind: "route",
+      label: route.path,
+      filePath: file.path,
+      featureId: file.featureId,
+      metadata: { routeKind: route.kind },
+    });
+    upsertEdge(state.edges, context.featureId, routeId, "owns", { routeKind: route.kind });
+    upsertEdge(state.edges, routeId, context.sourceFileId, "implements", {});
+  }
+}
+
+function addSymbolGraph(state: GraphBuildState, file: AnalyzedFile, context: FileGraphContext) {
+  for (const component of file.components) {
+    state.counters.componentCount += 1;
+    addDeclaredSymbol(state, file, context, "component", component, stableId("component", `${file.path}:${component}`));
+  }
+
+  for (const hook of file.hooks) {
+    state.counters.hookCount += 1;
+    addDeclaredSymbol(state, file, context, "hook", hook, stableId("hook", `${file.path}:${hook}`));
+  }
+}
+
+function addDeclaredSymbol(
+  state: GraphBuildState,
+  file: AnalyzedFile,
+  context: FileGraphContext,
+  kind: "component" | "hook",
+  label: string,
+  id: string,
+) {
+  upsertNode(state.nodes, {
+    id,
+    kind,
+    label,
+    filePath: file.path,
+    featureId: file.featureId,
+    metadata: {},
+  });
+  upsertEdge(state.edges, context.sourceFileId, id, "declares", {});
+}
+
+function addTypeGraph(state: GraphBuildState, file: AnalyzedFile, context: FileGraphContext) {
+  for (const typeDeclaration of file.typeDeclarations) {
+    state.counters.typeCount += 1;
+    const nodeId = typeNodeId(file.path, typeDeclaration);
+    upsertNode(state.nodes, {
+      id: nodeId,
+      kind: "type",
+      label: typeDeclaration,
+      filePath: file.path,
+      featureId: file.featureId,
+      metadata: { workspaceKey: context.workspace.key },
+    });
+    upsertEdge(state.edges, context.sourceFileId, nodeId, "declares", { contract: "type", health: "good", flow: "outflow" });
+  }
+}
+
+function addPermissionGraph(state: GraphBuildState, file: AnalyzedFile, context: FileGraphContext) {
+  for (const permission of permissionsForFile(file)) {
+    state.counters.permissionCount += 1;
+    const nodeId = permissionNodeId(permission.kind, permission.source);
+    upsertNode(state.nodes, {
+      id: nodeId,
+      kind: "permission",
+      label: permission.source,
+      filePath: null,
+      featureId: null,
+      metadata: { permissionKind: permission.kind },
+    });
+    upsertEdge(state.edges, context.sourceFileId, nodeId, "uses", {
+      permissionKind: permission.kind,
+      source: permission.source,
+      line: permission.line,
+      health: permissionHealth(file, permission),
+      flow: "outflow",
+    });
+  }
+}
+
+function addSourcePortGraph(state: GraphBuildState, file: AnalyzedFile, context: FileGraphContext) {
+  for (const port of file.ports) {
+    state.counters.runtimePortCount += 1;
+    const runtimeId = runtimeNodeId(`source-port:${file.path}:${port.port}:${port.kind}:${port.line}`);
+    upsertNode(state.nodes, {
+      id: runtimeId,
+      kind: "runtime",
+      label: `:${port.port}`,
+      filePath: file.path,
+      featureId: file.featureId,
+      metadata: { runtimeKind: "port", port: port.port, source: port.source, line: port.line, workspaceKey: context.workspace.key },
+    });
+    upsertEdge(state.edges, context.sourceFileId, runtimeId, "configures", {
+      port: port.port,
+      source: port.source,
+      line: port.line,
+      health: "good",
+      flow: "runtime",
+    });
+  }
+}
+
+function addImportGraph(
+  state: GraphBuildState,
+  project: ProjectConfig,
+  file: AnalyzedFile,
+  context: FileGraphContext,
+  resolverConfig: ImportResolverConfig,
+) {
+  for (const imported of file.imports) {
+    const resolved = resolveImportPath(project.rootPath, file.path, imported.specifier, state.knownFiles, resolverConfig);
+    if (resolved) {
+      addResolvedImport(state, imported, context.sourceFileId, resolved);
+    } else if (isProjectLocalImport(imported.specifier, resolverConfig)) {
+      addUnresolvedImport(state, file.path, imported, context.sourceFileId);
+    } else {
+      addExternalImport(state, imported, context.sourceFileId);
+    }
+  }
+}
+
+function addResolvedImport(
+  state: GraphBuildState,
+  imported: AnalyzedFile["imports"][number],
+  sourceFileId: string,
+  resolved: string,
+) {
+  state.counters.internalImportCount += 1;
+  upsertEdge(state.edges, sourceFileId, fileNodeId(resolved), "imports", importEdgeMetadata(imported, "good"));
+}
+
+function addUnresolvedImport(
+  state: GraphBuildState,
+  filePath: string,
+  imported: AnalyzedFile["imports"][number],
+  sourceFileId: string,
+) {
+  state.counters.unresolvedImportCount += 1;
+  state.unresolvedImports.push({ filePath, specifier: imported.specifier });
+  const dependencyId = dependencyNodeId(`unresolved:${imported.specifier}`);
+  upsertNode(state.nodes, {
+    id: dependencyId,
+    kind: "dependency",
+    label: imported.specifier,
+    filePath: null,
+    featureId: null,
+    metadata: { external: false, unresolved: true },
+  });
+  upsertEdge(state.edges, sourceFileId, dependencyId, "imports", importEdgeMetadata(imported, "broken", true));
+}
+
+function addExternalImport(state: GraphBuildState, imported: AnalyzedFile["imports"][number], sourceFileId: string) {
+  state.counters.externalDependencyCount += 1;
+  const dependencyId = dependencyNodeId(imported.specifier);
+  upsertNode(state.nodes, {
+    id: dependencyId,
+    kind: "dependency",
+    label: imported.specifier,
+    filePath: null,
+    featureId: null,
+    metadata: { external: true },
+  });
+  upsertEdge(state.edges, sourceFileId, dependencyId, "imports", importEdgeMetadata(imported, "good"));
+}
+
+function importEdgeMetadata(
+  imported: AnalyzedFile["imports"][number],
+  health: "good" | "broken",
+  unresolved = false,
+): GraphEdge["metadata"] {
+  return {
+    specifier: imported.specifier,
+    importKind: imported.kind,
+    importMode: imported.mode,
+    unresolved,
+    health,
+    flow: imported.mode === "type" ? "type" : "inflow",
+  };
+}
+
+function addApiCallGraph(state: GraphBuildState, file: AnalyzedFile, context: FileGraphContext) {
+  for (const apiCall of file.apiCalls) {
+    const targetRoute = state.routeByPath.get(apiCall);
+    if (targetRoute) {
+      upsertEdge(state.edges, context.sourceFileId, routeNodeId(targetRoute.path, targetRoute.kind), "calls", { apiCall, health: "good", flow: "outflow" });
+    } else {
+      addMissingApiRoute(state, file, apiCall, context.sourceFileId);
+    }
+  }
+}
+
+function addMissingApiRoute(state: GraphBuildState, file: AnalyzedFile, apiCall: string, sourceFileId: string) {
+  const missingRouteId = routeNodeId(apiCall, "missing-api");
+  upsertNode(state.nodes, {
+    id: missingRouteId,
+    kind: "route",
+    label: apiCall,
+    filePath: null,
+    featureId: file.featureId,
+    metadata: { routeKind: "missing-api", unresolved: true },
+  });
+  upsertEdge(state.edges, sourceFileId, missingRouteId, "calls", { apiCall, health: "broken", flow: "outflow" });
+}
+
+function addIssueEvidenceGraph(graphNodes: GraphNode[], graphEdges: GraphEdge[], issues: IssueSignal[]) {
+  for (const issue of issues) {
+    const nodeId = issueNodeId(issue.id);
+    graphNodes.push(issueNode(issue, nodeId));
+    graphEdges.push(...issueEdges(issue, nodeId));
+  }
+}
+
+function issueNode(issue: IssueSignal, nodeId: string): GraphNode {
+  return {
+    id: nodeId,
+    kind: "issue",
+    label: issue.title,
+    filePath: issue.filePaths[0] ?? null,
+    featureId: null,
+    metadata: {
+      issueKind: issue.kind,
+      severity: issue.severity,
+      confidence: issue.confidence,
+    },
+  };
+}
+
+function issueEdges(issue: IssueSignal, nodeId: string): GraphEdge[] {
+  return issue.evidenceNodeIds.map((evidenceNodeId) => ({
+    id: stableId("edge", `${nodeId}:flags:${evidenceNodeId}`),
+    source: nodeId,
+    target: evidenceNodeId,
+    kind: issueEdgeKind(issue),
+    metadata: { issueId: issue.id, health: issue.severity === "critical" ? "broken" : "warning", flow: "signal" },
+  }));
+}
+
+function issueEdgeKind(issue: IssueSignal): GraphEdge["kind"] {
+  if (issue.kind === "duplicate-logic") {
+    return "duplicates";
+  }
+  if (issue.kind === "dependency-cycle") {
+    return "cycles";
+  }
+
+  return "flags";
+}
+
+function buildGraphSummary(
+  project: ProjectConfig,
+  scanId: string,
+  files: AnalyzedFile[],
+  state: GraphBuildState,
+  graphEdges: GraphEdge[],
+  issues: IssueSignal[],
+): GraphSummary {
+  return {
+    projectName: project.name,
+    fileCount: files.length,
+    workspaceCount: state.workspaceFileCounts.size,
+    featureCount: new Set(files.map((file) => file.featureId)).size,
+    routeCount: state.routes.length,
+    internalImportCount: state.counters.internalImportCount,
+    externalDependencyCount: state.counters.externalDependencyCount,
+    unresolvedImportCount: state.counters.unresolvedImportCount,
+    componentCount: state.counters.componentCount,
+    hookCount: state.counters.hookCount,
+    typeCount: state.counters.typeCount,
+    permissionCount: state.counters.permissionCount,
+    runtimePortCount: state.counters.runtimePortCount,
+    startupIssueCount: issues.filter(isStartupIssue).length,
+    timingIssueCount: issues.filter(isTimingIssue).length,
+    brokenEdgeCount: graphEdges.filter((edge) => edge.metadata.health === "broken").length,
+    warningEdgeCount: graphEdges.filter((edge) => edge.metadata.health === "warning").length,
+    edgeCount: graphEdges.length,
+    issueCount: issues.length,
+    scanId,
+    scannedAt: new Date().toISOString(),
+  };
+}
+
+function isStartupIssue(issue: IssueSignal): boolean {
+  return issue.kind === "startup-problem" || issue.kind === "port-mismatch" || issue.kind === "env-contract-risk";
+}
+
+function isTimingIssue(issue: IssueSignal): boolean {
+  return issue.kind === "timer-without-cleanup"
+    || issue.kind === "suspicious-async-effect"
+    || issue.kind === "stale-closure-risk"
+    || issue.kind === "unguarded-parallel-async";
+}
+
+function requiredValue<T>(value: T | undefined, message: string): T {
+  if (value === undefined) {
+    throw new Error(message);
+  }
+
+  return value;
 }
 
 function upsertNode(nodes: Map<string, GraphNode>, node: GraphNode) {

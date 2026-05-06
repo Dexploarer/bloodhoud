@@ -144,6 +144,8 @@ type ParserHealth = {
   }>;
 };
 
+type SelectOption = { value: string; label: string };
+
 export function AtlasDashboard({
   initialProjects,
   initialSlice,
@@ -629,513 +631,842 @@ export function AtlasDashboard({
   }
 
   return (
+    <DashboardLayout
+      projects={projects}
+      selectedProjectId={selectedProjectId}
+      selectedProject={selectedProject}
+      projectName={projectName}
+      rootPath={rootPath}
+      ignoreText={ignoreText}
+      preview={preview}
+      loading={loading}
+      scanning={scanning}
+      error={error}
+      slice={slice}
+      debugGuide={debugGuide}
+      parserHealth={parserHealth}
+      scanProgress={scanProgress}
+      viewKind={viewKind}
+      target={target}
+      targetOptions={targetOptions}
+      flowNodes={flowNodes}
+      flowEdges={flowEdges}
+      selectedGraphNode={selectedGraphNode}
+      selectedNodeIssues={selectedNodeIssues}
+      sidePanelMode={sidePanelMode}
+      factoryProfile={factoryProfile}
+      factoryPacket={factoryPacket}
+      aiResult={aiResult}
+      aiScanning={aiScanning}
+      codexSession={codexSession}
+      codexLogin={codexLogin}
+      codexSigningIn={codexSigningIn}
+      codexConnected={codexConnected}
+      packet={packet}
+      onProjectNameChange={setProjectName}
+      onRootPathChange={setRootPath}
+      onIgnoreTextChange={setIgnoreText}
+      onLoadProjects={loadProjects}
+      onSelectProject={selectProject}
+      onPreviewIgnore={previewIgnore}
+      onSaveProject={saveProject}
+      onChangeView={changeView}
+      onBuildFactory={() => buildFactoryProfile()}
+      onSignInWithCodex={signInWithCodex}
+      onRunScan={runScan}
+      onChangeTarget={changeTarget}
+      onRunAiScan={runAiScan}
+      onBuildPacket={buildPacket}
+      onSelectNode={(nodeId) => {
+        setSelectedNodeId(nodeId);
+        setSidePanelMode("inspect");
+      }}
+      onClearNode={() => setSelectedNodeId(null)}
+      onSidePanelModeChange={setSidePanelMode}
+      onInspectIssue={(issueId) => changeView("issues").then(() => changeTarget(issueId))}
+      onOpenSlop={() => changeView("slop")}
+      onCopy={copyText}
+    />
+  );
+}
+
+type DashboardLayoutProps = {
+  projects: ProjectConfig[];
+  selectedProjectId: string | null;
+  selectedProject: ProjectConfig | null;
+  projectName: string;
+  rootPath: string;
+  ignoreText: string;
+  preview: IgnorePreview | null;
+  loading: boolean;
+  scanning: boolean;
+  error: string | null;
+  slice: GraphSlice | null;
+  debugGuide: DebugGuide | null;
+  parserHealth: ParserHealth;
+  scanProgress: ScanProgress | null;
+  viewKind: GraphSliceKind;
+  target: string | null;
+  targetOptions: SelectOption[];
+  flowNodes: FlowNode[];
+  flowEdges: FlowEdge[];
+  selectedGraphNode: GraphNode | null;
+  selectedNodeIssues: IssueSignal[];
+  sidePanelMode: SidePanelMode;
+  factoryProfile: SoftwareFactoryProfile | null;
+  factoryPacket: string;
+  aiResult: AiScanResult | null;
+  aiScanning: boolean;
+  codexSession: CodexSession | null;
+  codexLogin: CodexLogin | null;
+  codexSigningIn: boolean;
+  codexConnected: boolean;
+  packet: string;
+  onProjectNameChange: (value: string) => void;
+  onRootPathChange: (value: string) => void;
+  onIgnoreTextChange: (value: string) => void;
+  onLoadProjects: () => void;
+  onSelectProject: (project: ProjectConfig) => void;
+  onPreviewIgnore: () => void;
+  onSaveProject: () => void;
+  onChangeView: (kind: GraphSliceKind) => void;
+  onBuildFactory: () => void;
+  onSignInWithCodex: () => void;
+  onRunScan: () => void;
+  onChangeTarget: (target: string) => void;
+  onRunAiScan: () => void;
+  onBuildPacket: () => void;
+  onSelectNode: (nodeId: string) => void;
+  onClearNode: () => void;
+  onSidePanelModeChange: (mode: SidePanelMode) => void;
+  onInspectIssue: (issueId: string) => void;
+  onOpenSlop: () => void;
+  onCopy: (value: string) => void;
+};
+
+function DashboardLayout(props: DashboardLayoutProps) {
+  return (
     <div className="atlas-shell min-h-screen text-foreground">
-      <aside className="atlas-sidebar">
-        <div className="flex items-center gap-3 px-4 py-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-md border border-primary/40 bg-primary/15 text-primary">
-            <Activity className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">Bloodhoud</p>
-            <h1 className="text-lg font-semibold">Code Cartography</h1>
-          </div>
-        </div>
-
-        <nav className="atlas-sidebar-nav space-y-6 px-3">
-          <SidebarGroup label="Workspace">
-            <SidebarNavItem icon={Home} label="Dashboard" active />
-            <SidebarNavItem icon={MapIcon} label="Slop Map" active={viewKind === "slop"} onClick={() => changeView("slop")} />
-            <SidebarNavItem icon={Factory} label="Software Factory" onClick={() => buildFactoryProfile()} />
-            <SidebarNavItem icon={Search} label="Signals" active={viewKind === "issues"} onClick={() => changeView("issues")} />
-          </SidebarGroup>
-          <SidebarGroup label="Graph Slices">
-            {viewOptions.slice(0, 7).map((option) => (
-              <SidebarNavItem
-                key={option.kind}
-                icon={option.icon}
-                label={option.label}
-                active={viewKind === option.kind}
-                onClick={() => changeView(option.kind)}
-              />
-            ))}
-          </SidebarGroup>
-        </nav>
-
-        <div className="atlas-sidebar-panels mt-6 space-y-4 px-3 pb-4">
-          <section className="atlas-side-panel">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold">Project</h2>
-                <p className="text-xs text-muted-foreground">{selectedProject ? "Indexed workspace" : "No workspace"}</p>
-              </div>
-              <button
-                type="button"
-                onClick={loadProjects}
-                className="atlas-icon-button"
-                aria-label="Refresh projects"
-              >
-                <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <Field label="Name" value={projectName} onChange={setProjectName} placeholder="Bloodhoud Demo" />
-              <Field label="Root path" value={rootPath} onChange={setRootPath} placeholder="/Users/home/path/to/project" />
-              <label className="block space-y-1">
-                <span className="text-xs font-medium text-muted-foreground">Ignore patterns</span>
-                <textarea
-                  value={ignoreText}
-                  onChange={(event) => setIgnoreText(event.target.value)}
-                  className="atlas-textarea min-h-24"
-                  spellCheck={false}
-                />
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={previewIgnore} disabled={loading || rootPath.trim().length === 0} className="atlas-button-secondary">
-                  <ListFilter className="h-4 w-4" aria-hidden="true" />
-                  Preview
-                </button>
-                <button type="button" onClick={saveProject} disabled={loading || rootPath.trim().length === 0} className="atlas-button-primary">
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Braces className="h-4 w-4" aria-hidden="true" />}
-                  Save
-                </button>
-              </div>
-            </div>
-
-            {preview ? (
-              <div className="mt-4 space-y-3 border-t border-border pt-3 text-xs">
-                <div className="grid grid-cols-2 gap-2">
-                  <MiniMetric label="Indexed" value={preview.indexedCount} />
-                  <MiniMetric label="Ignored" value={preview.ignoredCount} />
-                </div>
-                <p className="line-clamp-3 text-muted-foreground">
-                  {preview.ignoredSamples.length > 0 ? preview.ignoredSamples.join(", ") : "No ignored files matched."}
-                </p>
-              </div>
-            ) : null}
-          </section>
-
-          <section className="atlas-side-panel">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-sm font-semibold">Repositories</h2>
-              <span className="atlas-count">{projects.length}</span>
-            </div>
-            {projects.length === 0 ? (
-              <EmptyState title="No projects yet" copy="Save a local path to begin." />
-            ) : (
-              <div className="max-h-52 space-y-2 overflow-auto pr-1">
-                {projects.map((project) => (
-                  <button
-                    type="button"
-                    key={project.id}
-                    onClick={() => selectProject(project)}
-                    className={`atlas-project-row ${project.id === selectedProjectId ? "atlas-project-row-active" : ""}`}
-                  >
-                    <span className="block truncate font-medium">{project.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">{project.rootPath}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
-      </aside>
-
+      <DashboardSidebar {...props} />
       <div className="atlas-main">
-        <header className="atlas-topbar">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-8">
-            <div>
-              <p className="atlas-eyebrow">Home</p>
-              <h2 className="text-2xl font-semibold">Bloodhoud</h2>
-            </div>
-            <div className="atlas-top-tabs">
-              <button
-                type="button"
-                onClick={() => changeView("overview")}
-                className={`atlas-top-tab ${viewKind === "overview" ? "atlas-top-tab-active" : ""}`}
-              >
-                Overview
-              </button>
-              <button
-                type="button"
-                onClick={() => changeView("feature")}
-                className={`atlas-top-tab ${viewKind === "workspace" || viewKind === "feature" || viewKind === "route" || viewKind === "dependencies" || viewKind === "contracts" || viewKind === "runtime" ? "atlas-top-tab-active" : ""}`}
-              >
-                Content
-              </button>
-              <button
-                type="button"
-                onClick={() => changeView("slop")}
-                className={`atlas-top-tab ${viewKind === "slop" || viewKind === "issues" || viewKind === "duplicates" ? "atlas-top-tab-active" : ""}`}
-              >
-                Debugging
-              </button>
-              <button
-                type="button"
-                onClick={() => buildFactoryProfile()}
-                disabled={!slice || loading}
-                className={`atlas-top-tab ${factoryProfile ? "atlas-top-tab-active" : ""}`}
-              >
-                Factory
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="atlas-command hidden sm:flex">
-              <Search className="h-4 w-4" aria-hidden="true" />
-              <span>Search graph</span>
-              <kbd>⌘K</kbd>
-            </div>
-            <button type="button" onClick={signInWithCodex} disabled={codexSigningIn} className={codexConnected ? "atlas-button-secondary" : "atlas-button-primary"}>
-              {codexSigningIn ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : codexConnected ? <Bot className="h-4 w-4" aria-hidden="true" /> : <LogIn className="h-4 w-4" aria-hidden="true" />}
-              {codexSigningIn ? "Connecting Codex" : codexConnected ? codexAccountLabel(codexSession) : "Sign in with Codex"}
-            </button>
-            <button type="button" onClick={runScan} disabled={!selectedProject || scanning} className="atlas-button-primary">
-              {scanning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
-              Scan
-            </button>
-          </div>
-        </header>
-
-        <main className="space-y-5 p-4 md:p-6">
-          {error ? (
-            <div className="atlas-alert">
-              {error}
-            </div>
-          ) : null}
-
-          <section className="atlas-studio-summary">
-            <StudioStat icon={Gauge} label="Architecture" value={debugGuide ? `${debugGuide.score}/100` : "—"} />
-            <StudioStat icon={FileCode2} label="Files" value={`${slice?.summary.fileCount ?? 0}`} />
-            <StudioStat icon={Boxes} label="Workspaces" value={`${slice?.summary.workspaceCount ?? 0}`} />
-            <StudioStat icon={Boxes} label="Features" value={`${slice?.summary.featureCount ?? 0}`} />
-            <StudioStat icon={Route} label="Routes" value={`${slice?.summary.routeCount ?? 0}`} />
-            <StudioStat icon={Gauge} label="Runtime Ports" value={`${slice?.summary.runtimePortCount ?? 0}`} />
-            <StudioStat icon={AlertTriangle} label="Broken Paths" value={`${slice?.summary.brokenEdgeCount ?? 0}`} />
-            <div className="atlas-studio-progress">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-muted-foreground">Scan</span>
-                <span className="text-sm font-semibold">{scanProgress?.phase ?? "Idle"}</span>
-              </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${Math.round((scanProgress?.progress ?? 0) * 100)}%` }} />
-              </div>
-              <p className="mt-2 truncate text-xs text-muted-foreground">{scanProgress ? scanProgress.message : "No active scan."}</p>
-            </div>
-          </section>
-
-          <ParserHealthPanel health={parserHealth} />
-
-          <section className="atlas-graph-studio">
-            <div className="atlas-graph-toolbar">
-              <div className="flex min-w-0 flex-col gap-1">
-                <h3 className="text-base font-semibold">Graph Canvas</h3>
-                <p className="truncate text-xs text-muted-foreground">{selectedProject?.rootPath ?? "Save a local project to begin"}</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {viewOptions.map((option) => {
-                  const Icon = option.icon;
-                  return (
-                    <button
-                      type="button"
-                      key={option.kind}
-                      onClick={() => changeView(option.kind)}
-                      className={`atlas-tab ${viewKind === option.kind ? "atlas-tab-active" : ""}`}
-                    >
-                      <Icon className="h-4 w-4" aria-hidden="true" />
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <select
-                  value={target ?? ""}
-                  onChange={(event) => changeTarget(event.target.value)}
-                  disabled={targetOptions.length === 0}
-                  className="atlas-select"
-                  aria-label="Graph target"
-                >
-                  <option value="">Whole slice</option>
-                  {targetOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={codexConnected ? runAiScan : signInWithCodex}
-                  disabled={codexConnected ? !slice || aiScanning : codexSigningIn}
-                  className={codexConnected ? "atlas-button-primary" : "atlas-button-secondary"}
-                >
-                  {aiScanning || codexSigningIn ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : codexConnected ? <Bot className="h-4 w-4" aria-hidden="true" /> : <LogIn className="h-4 w-4" aria-hidden="true" />}
-                  {codexConnected ? "AI Scan" : codexSigningIn ? "Connecting Codex" : "Sign in with Codex"}
-                </button>
-                <button
-                  type="button"
-                  onClick={buildPacket}
-                  disabled={!slice || loading}
-                  className="atlas-button-secondary"
-                >
-                  <Sparkles className="h-4 w-4" aria-hidden="true" />
-                  Packet
-                </button>
-              </div>
-            </div>
-
-            <div className="atlas-graph-body">
-              <div className="atlas-canvas">
-                {slice && flowNodes.length > 0 ? (
-                  <>
-                    <ReactFlow
-                      key={`${slice.summary.scanId}:${viewKind}:${target ?? "all"}`}
-                      defaultNodes={flowNodes}
-                      defaultEdges={flowEdges}
-                      onNodeClick={(_, node) => {
-                        setSelectedNodeId(node.id);
-                        setSidePanelMode("inspect");
-                      }}
-                      onSelectionChange={({ nodes }) => {
-                        const selectedNode = nodes[0];
-                        setSelectedNodeId(selectedNode?.id ?? null);
-                        if (selectedNode) {
-                          setSidePanelMode("inspect");
-                        }
-                      }}
-                      onPaneClick={() => setSelectedNodeId(null)}
-                      defaultViewport={{ x: 32, y: 112, zoom: 0.76 }}
-                      elementsSelectable
-                      nodesDraggable
-                      panOnDrag
-                      zoomOnScroll
-                      minZoom={0.2}
-                      maxZoom={1.4}
-                    >
-                      <Background />
-                      <MiniMap pannable zoomable bgColor="#11110f" maskColor="rgba(8, 8, 7, 0.68)" nodeColor="#e5b72f" />
-                      <Controls />
-                    </ReactFlow>
-                    <FlowLegend slice={slice} />
-                  </>
-                ) : loading ? (
-                  <div className="grid h-full place-items-center">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-label="Loading graph" />
-                  </div>
-                ) : (
-                  <div className="grid h-full place-items-center">
-                    <EmptyState title="No graph loaded" copy="Save a project and scan it to populate the canvas." />
-                  </div>
-                )}
-              </div>
-              <CanvasSidePanel
-                mode={sidePanelMode}
-                onModeChange={setSidePanelMode}
-                node={selectedGraphNode}
-                issues={selectedNodeIssues}
-                slice={slice}
-                guide={debugGuide}
-                aiResult={aiResult}
-                aiScanning={aiScanning}
-                codexSession={codexSession}
-                codexLogin={codexLogin}
-                codexSigningIn={codexSigningIn}
-                codexConnected={codexConnected}
-                onInspectIssue={(issueId) => changeView("issues").then(() => changeTarget(issueId))}
-                onOpenView={changeView}
-                onRunAiScan={runAiScan}
-                onSignInWithCodex={signInWithCodex}
-                onCopy={copyText}
-              />
-            </div>
-          </section>
-
-          {debugGuide ? <DebugGuidePanel guide={debugGuide} onCopy={() => copyText(debugGuide.mermaid)} /> : null}
-
-          {slice && debugGuide ? (
-            <DeslopifyWorkbench
-              slice={slice}
-              guide={debugGuide}
-              onInspectIssue={(issueId) => changeView("issues").then(() => changeTarget(issueId))}
-              onOpenSlop={() => changeView("slop")}
-              onOpenView={changeView}
-              onBuildPacket={buildPacket}
-            />
-          ) : null}
-
-          {aiResult ? (
-            <AiReviewWorkbench
-              result={aiResult}
-              onInspectIssue={(issueId) => changeView("issues").then(() => changeTarget(issueId))}
-              onCopy={copyText}
-            />
-          ) : null}
-
-          <section className="atlas-card p-4">
-            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Factory className="h-5 w-5 text-primary" aria-hidden="true" />
-                  <h2 className="text-base font-semibold">Software Factory</h2>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Shared context, agent lanes, triggers, guardrails, and reusable skills from the current graph slice.
-                </p>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <button
-                  type="button"
-                  onClick={() => buildFactoryProfile()}
-                  disabled={!slice || loading}
-                  className="atlas-button-primary"
-                >
-                  <Workflow className="h-4 w-4" aria-hidden="true" />
-                  Build Factory
-                </button>
-                <button
-                  type="button"
-                  onClick={() => copyText(factoryPacket)}
-                  disabled={!factoryPacket}
-                  className="atlas-button-secondary"
-                >
-                  <Copy className="h-4 w-4" aria-hidden="true" />
-                  Copy
-                </button>
-              </div>
-            </div>
-
-            {factoryProfile ? (
-              <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  {factoryProfile.metrics.map((metric) => (
-                    <div key={metric.label} className="rounded-md border border-border bg-background p-3">
-                      <div className="text-xs text-muted-foreground">{metric.label}</div>
-                      <div className="mt-1 text-xl font-semibold">{metric.value}</div>
-                      <p className="mt-2 text-xs text-muted-foreground">{metric.detail}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid gap-4 xl:grid-cols-3">
-                  <FactoryColumn
-                    icon={BookOpen}
-                    title="Context Snapshots"
-                    items={factoryProfile.snapshots.map((snapshot) => ({
-                      title: snapshot.title,
-                      detail: snapshot.description,
-                      meta: `${snapshot.sources.length} sources`,
-                    }))}
-                  />
-                  <FactoryColumn
-                    icon={Bot}
-                    title="Agent Lanes"
-                    items={factoryProfile.agents.map((agent) => ({
-                      title: agent.name,
-                      detail: agent.role,
-                      meta: agent.trigger,
-                    }))}
-                  />
-                  <FactoryColumn
-                    icon={ShieldCheck}
-                    title="Guardrails"
-                    items={factoryProfile.guardrails.map((guardrail) => ({
-                      title: guardrail.name,
-                      detail: guardrail.rationale,
-                      meta: guardrail.severity,
-                    }))}
-                  />
-                </div>
-
-                <div className="grid gap-4 xl:grid-cols-2">
-                  <FactoryColumn
-                    icon={Workflow}
-                    title="Triggers"
-                    items={factoryProfile.triggers.map((trigger) => ({
-                      title: trigger.name,
-                      detail: `${trigger.event}; ${trigger.action}`,
-                      meta: trigger.condition,
-                    }))}
-                  />
-                  <FactoryColumn
-                    icon={Sparkles}
-                    title="Reusable Skills"
-                    items={factoryProfile.skills.map((skill) => ({
-                      title: skill.name,
-                      detail: skill.prompt,
-                      meta: skill.appliesTo,
-                    }))}
-                  />
-                </div>
-              </div>
-            ) : (
-              <EmptyState title="No factory profile yet" copy="Build one after loading a graph slice to create agent-ready shared context." />
-            )}
-          </section>
-
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <section className="atlas-card p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold">Mermaid</h2>
-                  <p className="text-sm text-muted-foreground">Flowchart for the current graph slice.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => copyText(slice?.mermaid ?? "")}
-                  disabled={!slice}
-                  className="atlas-button-secondary"
-                >
-                  <Copy className="h-4 w-4" aria-hidden="true" />
-                  Copy
-                </button>
-              </div>
-              {slice ? <MermaidPreview chart={slice.mermaid} /> : <EmptyState title="No chart yet" copy="Mermaid appears after a graph slice loads." />}
-            </section>
-
-            <section className="atlas-card p-4">
-              <div className="mb-3">
-                <h2 className="text-base font-semibold">Signals</h2>
-                <p className="text-sm text-muted-foreground">Static findings with confidence labels.</p>
-              </div>
-              {slice?.issues.length ? (
-                <div className="max-h-[420px] space-y-2 overflow-auto pr-1">
-                  {slice.issues.map((issue) => (
-                    <IssueRow key={issue.id} issue={issue} onInspect={() => changeView("issues").then(() => changeTarget(issue.id))} />
-                  ))}
-                </div>
-              ) : (
-                <EmptyState title="No signals in slice" copy="Switch views or scan a project with more route and dependency data." />
-              )}
-            </section>
-          </div>
-
-          {packet ? (
-            <section className="atlas-card p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold">AI Packet</h2>
-                  <p className="text-sm text-muted-foreground">Evidence bundle for cleanup, debugging, and de-sloppification prompts.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => copyText(packet)}
-                  className="atlas-button-secondary"
-                >
-                  <Copy className="h-4 w-4" aria-hidden="true" />
-                  Copy
-                </button>
-              </div>
-              <textarea
-                value={packet}
-                readOnly
-                className="h-80 w-full rounded-md border border-border bg-background/80 p-3 font-mono text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </section>
-          ) : null}
-        </main>
+        <DashboardTopbar {...props} />
+        <DashboardMain {...props} />
       </div>
     </div>
   );
+}
+
+function DashboardSidebar({
+  projects,
+  selectedProjectId,
+  selectedProject,
+  projectName,
+  rootPath,
+  ignoreText,
+  preview,
+  loading,
+  viewKind,
+  onProjectNameChange,
+  onRootPathChange,
+  onIgnoreTextChange,
+  onLoadProjects,
+  onSelectProject,
+  onPreviewIgnore,
+  onSaveProject,
+  onChangeView,
+  onBuildFactory,
+}: DashboardLayoutProps) {
+  return (
+    <aside className="atlas-sidebar">
+      <div className="flex items-center gap-3 px-4 py-5">
+        <div className="flex h-10 w-10 items-center justify-center rounded-md border border-primary/40 bg-primary/15 text-primary">
+          <Activity className="h-5 w-5" aria-hidden="true" />
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">Bloodhoud</p>
+          <h1 className="text-lg font-semibold">Code Cartography</h1>
+        </div>
+      </div>
+
+      <nav className="atlas-sidebar-nav space-y-6 px-3">
+        <SidebarGroup label="Workspace">
+          <SidebarNavItem icon={Home} label="Dashboard" active />
+          <SidebarNavItem icon={MapIcon} label="Slop Map" active={viewKind === "slop"} onClick={() => onChangeView("slop")} />
+          <SidebarNavItem icon={Factory} label="Software Factory" onClick={onBuildFactory} />
+          <SidebarNavItem icon={Search} label="Signals" active={viewKind === "issues"} onClick={() => onChangeView("issues")} />
+        </SidebarGroup>
+        <SidebarGroup label="Graph Slices">
+          {viewOptions.slice(0, 7).map((option) => (
+            <SidebarNavItem
+              key={option.kind}
+              icon={option.icon}
+              label={option.label}
+              active={viewKind === option.kind}
+              onClick={() => onChangeView(option.kind)}
+            />
+          ))}
+        </SidebarGroup>
+      </nav>
+
+      <div className="atlas-sidebar-panels mt-6 space-y-4 px-3 pb-4">
+        <ProjectSidePanel
+          projectName={projectName}
+          rootPath={rootPath}
+          ignoreText={ignoreText}
+          preview={preview}
+          loading={loading}
+          selectedProject={selectedProject}
+          onProjectNameChange={onProjectNameChange}
+          onRootPathChange={onRootPathChange}
+          onIgnoreTextChange={onIgnoreTextChange}
+          onLoadProjects={onLoadProjects}
+          onPreviewIgnore={onPreviewIgnore}
+          onSaveProject={onSaveProject}
+        />
+        <RepositorySidePanel
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={onSelectProject}
+        />
+      </div>
+    </aside>
+  );
+}
+
+function ProjectSidePanel({
+  projectName,
+  rootPath,
+  ignoreText,
+  preview,
+  loading,
+  selectedProject,
+  onProjectNameChange,
+  onRootPathChange,
+  onIgnoreTextChange,
+  onLoadProjects,
+  onPreviewIgnore,
+  onSaveProject,
+}: Pick<DashboardLayoutProps, "projectName" | "rootPath" | "ignoreText" | "preview" | "loading" | "selectedProject" | "onProjectNameChange" | "onRootPathChange" | "onIgnoreTextChange" | "onLoadProjects" | "onPreviewIgnore" | "onSaveProject">) {
+  const projectActionDisabled = loading || rootPath.trim().length === 0;
+
+  return (
+    <section className="atlas-side-panel">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold">Project</h2>
+          <p className="text-xs text-muted-foreground">{selectedProject ? "Indexed workspace" : "No workspace"}</p>
+        </div>
+        <button type="button" onClick={onLoadProjects} className="atlas-icon-button" aria-label="Refresh projects">
+          <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        <Field label="Name" value={projectName} onChange={onProjectNameChange} placeholder="Bloodhoud Demo" />
+        <Field label="Root path" value={rootPath} onChange={onRootPathChange} placeholder="/Users/home/path/to/project" />
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">Ignore patterns</span>
+          <textarea
+            value={ignoreText}
+            onChange={(event) => onIgnoreTextChange(event.target.value)}
+            className="atlas-textarea min-h-24"
+            spellCheck={false}
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={onPreviewIgnore} disabled={projectActionDisabled} className="atlas-button-secondary">
+            <ListFilter className="h-4 w-4" aria-hidden="true" />
+            Preview
+          </button>
+          <button type="button" onClick={onSaveProject} disabled={projectActionDisabled} className="atlas-button-primary">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Braces className="h-4 w-4" aria-hidden="true" />}
+            Save
+          </button>
+        </div>
+      </div>
+
+      {preview ? <IgnorePreviewSummary preview={preview} /> : null}
+    </section>
+  );
+}
+
+function IgnorePreviewSummary({ preview }: { preview: IgnorePreview }) {
+  return (
+    <div className="mt-4 space-y-3 border-t border-border pt-3 text-xs">
+      <div className="grid grid-cols-2 gap-2">
+        <MiniMetric label="Indexed" value={preview.indexedCount} />
+        <MiniMetric label="Ignored" value={preview.ignoredCount} />
+      </div>
+      <p className="line-clamp-3 text-muted-foreground">
+        {preview.ignoredSamples.length > 0 ? preview.ignoredSamples.join(", ") : "No ignored files matched."}
+      </p>
+    </div>
+  );
+}
+
+function RepositorySidePanel({
+  projects,
+  selectedProjectId,
+  onSelectProject,
+}: Pick<DashboardLayoutProps, "projects" | "selectedProjectId" | "onSelectProject">) {
+  return (
+    <section className="atlas-side-panel">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold">Repositories</h2>
+        <span className="atlas-count">{projects.length}</span>
+      </div>
+      {projects.length === 0 ? (
+        <EmptyState title="No projects yet" copy="Save a local path to begin." />
+      ) : (
+        <div className="max-h-52 space-y-2 overflow-auto pr-1">
+          {projects.map((project) => (
+            <button
+              type="button"
+              key={project.id}
+              onClick={() => onSelectProject(project)}
+              className={`atlas-project-row ${project.id === selectedProjectId ? "atlas-project-row-active" : ""}`}
+            >
+              <span className="block truncate font-medium">{project.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">{project.rootPath}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DashboardTopbar({
+  viewKind,
+  slice,
+  loading,
+  factoryProfile,
+  selectedProject,
+  scanning,
+  codexSession,
+  codexSigningIn,
+  codexConnected,
+  onChangeView,
+  onBuildFactory,
+  onSignInWithCodex,
+  onRunScan,
+}: DashboardLayoutProps) {
+  return (
+    <header className="atlas-topbar">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-8">
+        <div>
+          <p className="atlas-eyebrow">Home</p>
+          <h2 className="text-2xl font-semibold">Bloodhoud</h2>
+        </div>
+        <TopTabs
+          viewKind={viewKind}
+          factoryActive={Boolean(factoryProfile)}
+          factoryDisabled={!slice || loading}
+          onChangeView={onChangeView}
+          onBuildFactory={onBuildFactory}
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="atlas-command hidden sm:flex">
+          <Search className="h-4 w-4" aria-hidden="true" />
+          <span>Search graph</span>
+          <kbd>⌘K</kbd>
+        </div>
+        <CodexButton
+          session={codexSession}
+          signingIn={codexSigningIn}
+          connected={codexConnected}
+          onSignIn={onSignInWithCodex}
+        />
+        <button type="button" onClick={onRunScan} disabled={!selectedProject || scanning} className="atlas-button-primary">
+          {scanning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
+          Scan
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function TopTabs({
+  viewKind,
+  factoryActive,
+  factoryDisabled,
+  onChangeView,
+  onBuildFactory,
+}: {
+  viewKind: GraphSliceKind;
+  factoryActive: boolean;
+  factoryDisabled: boolean;
+  onChangeView: (kind: GraphSliceKind) => void;
+  onBuildFactory: () => void;
+}) {
+  return (
+    <div className="atlas-top-tabs">
+      <button type="button" onClick={() => onChangeView("overview")} className={`atlas-top-tab ${viewKind === "overview" ? "atlas-top-tab-active" : ""}`}>
+        Overview
+      </button>
+      <button type="button" onClick={() => onChangeView("feature")} className={`atlas-top-tab ${contentTabActive(viewKind) ? "atlas-top-tab-active" : ""}`}>
+        Content
+      </button>
+      <button type="button" onClick={() => onChangeView("slop")} className={`atlas-top-tab ${debuggingTabActive(viewKind) ? "atlas-top-tab-active" : ""}`}>
+        Debugging
+      </button>
+      <button type="button" onClick={onBuildFactory} disabled={factoryDisabled} className={`atlas-top-tab ${factoryActive ? "atlas-top-tab-active" : ""}`}>
+        Factory
+      </button>
+    </div>
+  );
+}
+
+function CodexButton({
+  session,
+  signingIn,
+  connected,
+  onSignIn,
+}: {
+  session: CodexSession | null;
+  signingIn: boolean;
+  connected: boolean;
+  onSignIn: () => void;
+}) {
+  return (
+    <button type="button" onClick={onSignIn} disabled={signingIn} className={connected ? "atlas-button-secondary" : "atlas-button-primary"}>
+      {signingIn ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : connected ? <Bot className="h-4 w-4" aria-hidden="true" /> : <LogIn className="h-4 w-4" aria-hidden="true" />}
+      {signingIn ? "Connecting Codex" : connected ? codexAccountLabel(session) : "Sign in with Codex"}
+    </button>
+  );
+}
+
+function DashboardMain(props: DashboardLayoutProps) {
+  return (
+    <main className="space-y-5 p-4 md:p-6">
+      {props.error ? <div className="atlas-alert">{props.error}</div> : null}
+      <StudioSummary slice={props.slice} guide={props.debugGuide} scanProgress={props.scanProgress} />
+      <ParserHealthPanel health={props.parserHealth} />
+      <GraphStudioSection {...props} />
+      {props.debugGuide ? <DebugGuidePanel guide={props.debugGuide} onCopy={() => props.onCopy(props.debugGuide?.mermaid ?? "")} /> : null}
+      {props.slice && props.debugGuide ? <DeslopifyWorkbench slice={props.slice} guide={props.debugGuide} onInspectIssue={props.onInspectIssue} onOpenSlop={props.onOpenSlop} onOpenView={props.onChangeView} onBuildPacket={props.onBuildPacket} /> : null}
+      {props.aiResult ? <AiReviewWorkbench result={props.aiResult} onInspectIssue={props.onInspectIssue} onCopy={props.onCopy} /> : null}
+      <SoftwareFactorySection {...props} />
+      <MermaidSignalsGrid {...props} />
+      <PacketSection packet={props.packet} onCopy={props.onCopy} />
+    </main>
+  );
+}
+
+function StudioSummary({
+  slice,
+  guide,
+  scanProgress,
+}: {
+  slice: GraphSlice | null;
+  guide: DebugGuide | null;
+  scanProgress: ScanProgress | null;
+}) {
+  return (
+    <section className="atlas-studio-summary">
+      <StudioStat icon={Gauge} label="Architecture" value={guide ? `${guide.score}/100` : "-"} />
+      <StudioStat icon={FileCode2} label="Files" value={`${slice?.summary.fileCount ?? 0}`} />
+      <StudioStat icon={Boxes} label="Workspaces" value={`${slice?.summary.workspaceCount ?? 0}`} />
+      <StudioStat icon={Boxes} label="Features" value={`${slice?.summary.featureCount ?? 0}`} />
+      <StudioStat icon={Route} label="Routes" value={`${slice?.summary.routeCount ?? 0}`} />
+      <StudioStat icon={Gauge} label="Runtime Ports" value={`${slice?.summary.runtimePortCount ?? 0}`} />
+      <StudioStat icon={AlertTriangle} label="Broken Paths" value={`${slice?.summary.brokenEdgeCount ?? 0}`} />
+      <ScanProgressStat progress={scanProgress} />
+    </section>
+  );
+}
+
+function ScanProgressStat({ progress }: { progress: ScanProgress | null }) {
+  return (
+    <div className="atlas-studio-progress">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-muted-foreground">Scan</span>
+        <span className="text-sm font-semibold">{progress?.phase ?? "Idle"}</span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${Math.round((progress?.progress ?? 0) * 100)}%` }} />
+      </div>
+      <p className="mt-2 truncate text-xs text-muted-foreground">{progress ? progress.message : "No active scan."}</p>
+    </div>
+  );
+}
+
+function GraphStudioSection(props: DashboardLayoutProps) {
+  return (
+    <section className="atlas-graph-studio">
+      <GraphToolbar {...props} />
+      <div className="atlas-graph-body">
+        <FlowCanvas
+          slice={props.slice}
+          flowNodes={props.flowNodes}
+          flowEdges={props.flowEdges}
+          loading={props.loading}
+          viewKind={props.viewKind}
+          target={props.target}
+          onSelectNode={props.onSelectNode}
+          onClearNode={props.onClearNode}
+        />
+        <CanvasSidePanel
+          mode={props.sidePanelMode}
+          onModeChange={props.onSidePanelModeChange}
+          node={props.selectedGraphNode}
+          issues={props.selectedNodeIssues}
+          slice={props.slice}
+          guide={props.debugGuide}
+          aiResult={props.aiResult}
+          aiScanning={props.aiScanning}
+          codexSession={props.codexSession}
+          codexLogin={props.codexLogin}
+          codexSigningIn={props.codexSigningIn}
+          codexConnected={props.codexConnected}
+          onInspectIssue={props.onInspectIssue}
+          onOpenView={props.onChangeView}
+          onRunAiScan={props.onRunAiScan}
+          onSignInWithCodex={props.onSignInWithCodex}
+          onCopy={props.onCopy}
+        />
+      </div>
+    </section>
+  );
+}
+
+function GraphToolbar({
+  selectedProject,
+  viewKind,
+  target,
+  targetOptions,
+  slice,
+  loading,
+  aiScanning,
+  codexSigningIn,
+  codexConnected,
+  onChangeView,
+  onChangeTarget,
+  onRunAiScan,
+  onSignInWithCodex,
+  onBuildPacket,
+}: DashboardLayoutProps) {
+  return (
+    <div className="atlas-graph-toolbar">
+      <div className="flex min-w-0 flex-col gap-1">
+        <h3 className="text-base font-semibold">Graph Canvas</h3>
+        <p className="truncate text-xs text-muted-foreground">{selectedProject?.rootPath ?? "Save a local project to begin"}</p>
+      </div>
+      <GraphViewTabs viewKind={viewKind} onChangeView={onChangeView} />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <GraphTargetSelect target={target} targetOptions={targetOptions} onChangeTarget={onChangeTarget} />
+        <button
+          type="button"
+          onClick={codexConnected ? onRunAiScan : onSignInWithCodex}
+          disabled={codexConnected ? !slice || aiScanning : codexSigningIn}
+          className={codexConnected ? "atlas-button-primary" : "atlas-button-secondary"}
+        >
+          {aiScanning || codexSigningIn ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : codexConnected ? <Bot className="h-4 w-4" aria-hidden="true" /> : <LogIn className="h-4 w-4" aria-hidden="true" />}
+          {codexConnected ? "AI Scan" : codexSigningIn ? "Connecting Codex" : "Sign in with Codex"}
+        </button>
+        <button type="button" onClick={onBuildPacket} disabled={!slice || loading} className="atlas-button-secondary">
+          <Sparkles className="h-4 w-4" aria-hidden="true" />
+          Packet
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GraphViewTabs({ viewKind, onChangeView }: { viewKind: GraphSliceKind; onChangeView: (kind: GraphSliceKind) => void }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {viewOptions.map((option) => {
+        const Icon = option.icon;
+        return (
+          <button type="button" key={option.kind} onClick={() => onChangeView(option.kind)} className={`atlas-tab ${viewKind === option.kind ? "atlas-tab-active" : ""}`}>
+            <Icon className="h-4 w-4" aria-hidden="true" />
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function GraphTargetSelect({
+  target,
+  targetOptions,
+  onChangeTarget,
+}: {
+  target: string | null;
+  targetOptions: SelectOption[];
+  onChangeTarget: (target: string) => void;
+}) {
+  return (
+    <select value={target ?? ""} onChange={(event) => onChangeTarget(event.target.value)} disabled={targetOptions.length === 0} className="atlas-select" aria-label="Graph target">
+      <option value="">Whole slice</option>
+      {targetOptions.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function FlowCanvas({
+  slice,
+  flowNodes,
+  flowEdges,
+  loading,
+  viewKind,
+  target,
+  onSelectNode,
+  onClearNode,
+}: {
+  slice: GraphSlice | null;
+  flowNodes: FlowNode[];
+  flowEdges: FlowEdge[];
+  loading: boolean;
+  viewKind: GraphSliceKind;
+  target: string | null;
+  onSelectNode: (nodeId: string) => void;
+  onClearNode: () => void;
+}) {
+  return (
+    <div className="atlas-canvas">
+      <FlowCanvasContent
+        slice={slice}
+        flowNodes={flowNodes}
+        flowEdges={flowEdges}
+        loading={loading}
+        viewKind={viewKind}
+        target={target}
+        onSelectNode={onSelectNode}
+        onClearNode={onClearNode}
+      />
+    </div>
+  );
+}
+
+function FlowCanvasContent({
+  slice,
+  flowNodes,
+  flowEdges,
+  loading,
+  viewKind,
+  target,
+  onSelectNode,
+  onClearNode,
+}: {
+  slice: GraphSlice | null;
+  flowNodes: FlowNode[];
+  flowEdges: FlowEdge[];
+  loading: boolean;
+  viewKind: GraphSliceKind;
+  target: string | null;
+  onSelectNode: (nodeId: string) => void;
+  onClearNode: () => void;
+}) {
+  if (slice && flowNodes.length > 0) {
+    return <InteractiveFlow slice={slice} flowNodes={flowNodes} flowEdges={flowEdges} viewKind={viewKind} target={target} onSelectNode={onSelectNode} onClearNode={onClearNode} />;
+  }
+
+  if (loading) {
+    return (
+      <div className="grid h-full place-items-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-label="Loading graph" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid h-full place-items-center">
+      <EmptyState title="No graph loaded" copy="Save a project and scan it to populate the canvas." />
+    </div>
+  );
+}
+
+function InteractiveFlow({
+  slice,
+  flowNodes,
+  flowEdges,
+  viewKind,
+  target,
+  onSelectNode,
+  onClearNode,
+}: {
+  slice: GraphSlice;
+  flowNodes: FlowNode[];
+  flowEdges: FlowEdge[];
+  viewKind: GraphSliceKind;
+  target: string | null;
+  onSelectNode: (nodeId: string) => void;
+  onClearNode: () => void;
+}) {
+  return (
+    <>
+      <ReactFlow
+        key={`${slice.summary.scanId}:${viewKind}:${target ?? "all"}`}
+        defaultNodes={flowNodes}
+        defaultEdges={flowEdges}
+        onNodeClick={(_, node) => onSelectNode(node.id)}
+        onSelectionChange={({ nodes }) => {
+          const selectedNode = nodes[0];
+          if (selectedNode) {
+            onSelectNode(selectedNode.id);
+          } else {
+            onClearNode();
+          }
+        }}
+        onPaneClick={onClearNode}
+        defaultViewport={{ x: 32, y: 112, zoom: 0.76 }}
+        elementsSelectable
+        nodesDraggable
+        panOnDrag
+        zoomOnScroll
+        minZoom={0.2}
+        maxZoom={1.4}
+      >
+        <Background />
+        <MiniMap pannable zoomable bgColor="#11110f" maskColor="rgba(8, 8, 7, 0.68)" nodeColor="#e5b72f" />
+        <Controls />
+      </ReactFlow>
+      <FlowLegend slice={slice} />
+    </>
+  );
+}
+
+function SoftwareFactorySection({
+  slice,
+  loading,
+  factoryProfile,
+  factoryPacket,
+  onBuildFactory,
+  onCopy,
+}: DashboardLayoutProps) {
+  return (
+    <section className="atlas-card p-4">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Factory className="h-5 w-5 text-primary" aria-hidden="true" />
+            <h2 className="text-base font-semibold">Software Factory</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">Shared context, agent lanes, triggers, guardrails, and reusable skills from the current graph slice.</p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button type="button" onClick={onBuildFactory} disabled={!slice || loading} className="atlas-button-primary">
+            <Workflow className="h-4 w-4" aria-hidden="true" />
+            Build Factory
+          </button>
+          <button type="button" onClick={() => onCopy(factoryPacket)} disabled={!factoryPacket} className="atlas-button-secondary">
+            <Copy className="h-4 w-4" aria-hidden="true" />
+            Copy
+          </button>
+        </div>
+      </div>
+
+      {factoryProfile ? <SoftwareFactoryProfileView profile={factoryProfile} /> : <EmptyState title="No factory profile yet" copy="Build one after loading a graph slice to create agent-ready shared context." />}
+    </section>
+  );
+}
+
+function SoftwareFactoryProfileView({ profile }: { profile: SoftwareFactoryProfile }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {profile.metrics.map((metric) => (
+          <div key={metric.label} className="rounded-md border border-border bg-background p-3">
+            <div className="text-xs text-muted-foreground">{metric.label}</div>
+            <div className="mt-1 text-xl font-semibold">{metric.value}</div>
+            <p className="mt-2 text-xs text-muted-foreground">{metric.detail}</p>
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 xl:grid-cols-3">
+        <FactoryColumn icon={BookOpen} title="Context Snapshots" items={profile.snapshots.map((snapshot) => ({ title: snapshot.title, detail: snapshot.description, meta: `${snapshot.sources.length} sources` }))} />
+        <FactoryColumn icon={Bot} title="Agent Lanes" items={profile.agents.map((agent) => ({ title: agent.name, detail: agent.role, meta: agent.trigger }))} />
+        <FactoryColumn icon={ShieldCheck} title="Guardrails" items={profile.guardrails.map((guardrail) => ({ title: guardrail.name, detail: guardrail.rationale, meta: guardrail.severity }))} />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <FactoryColumn icon={Workflow} title="Triggers" items={profile.triggers.map((trigger) => ({ title: trigger.name, detail: `${trigger.event}; ${trigger.action}`, meta: trigger.condition }))} />
+        <FactoryColumn icon={Sparkles} title="Reusable Skills" items={profile.skills.map((skill) => ({ title: skill.name, detail: skill.prompt, meta: skill.appliesTo }))} />
+      </div>
+    </div>
+  );
+}
+
+function MermaidSignalsGrid({ slice, onCopy, onInspectIssue }: DashboardLayoutProps) {
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="atlas-card p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">Mermaid</h2>
+            <p className="text-sm text-muted-foreground">Flowchart for the current graph slice.</p>
+          </div>
+          <button type="button" onClick={() => onCopy(slice?.mermaid ?? "")} disabled={!slice} className="atlas-button-secondary">
+            <Copy className="h-4 w-4" aria-hidden="true" />
+            Copy
+          </button>
+        </div>
+        {slice ? <MermaidPreview chart={slice.mermaid} /> : <EmptyState title="No chart yet" copy="Mermaid appears after a graph slice loads." />}
+      </section>
+      <SignalsCard slice={slice} onInspectIssue={onInspectIssue} />
+    </div>
+  );
+}
+
+function SignalsCard({ slice, onInspectIssue }: { slice: GraphSlice | null; onInspectIssue: (issueId: string) => void }) {
+  return (
+    <section className="atlas-card p-4">
+      <div className="mb-3">
+        <h2 className="text-base font-semibold">Signals</h2>
+        <p className="text-sm text-muted-foreground">Static findings with confidence labels.</p>
+      </div>
+      {slice?.issues.length ? (
+        <div className="max-h-[420px] space-y-2 overflow-auto pr-1">
+          {slice.issues.map((issue) => (
+            <IssueRow key={issue.id} issue={issue} onInspect={() => onInspectIssue(issue.id)} />
+          ))}
+        </div>
+      ) : (
+        <EmptyState title="No signals in slice" copy="Switch views or scan a project with more route and dependency data." />
+      )}
+    </section>
+  );
+}
+
+function PacketSection({ packet, onCopy }: { packet: string; onCopy: (value: string) => void }) {
+  if (!packet) {
+    return null;
+  }
+
+  return (
+    <section className="atlas-card p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">AI Packet</h2>
+          <p className="text-sm text-muted-foreground">Evidence bundle for cleanup, debugging, and de-sloppification prompts.</p>
+        </div>
+        <button type="button" onClick={() => onCopy(packet)} className="atlas-button-secondary">
+          <Copy className="h-4 w-4" aria-hidden="true" />
+          Copy
+        </button>
+      </div>
+      <textarea
+        value={packet}
+        readOnly
+        className="h-80 w-full rounded-md border border-border bg-background/80 p-3 font-mono text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+    </section>
+  );
+}
+
+function contentTabActive(kind: GraphSliceKind): boolean {
+  return kind === "workspace" || kind === "feature" || kind === "route" || kind === "dependencies" || kind === "contracts" || kind === "runtime";
+}
+
+function debuggingTabActive(kind: GraphSliceKind): boolean {
+  return kind === "slop" || kind === "issues" || kind === "duplicates";
 }
 
 function SidebarGroup({ label, children }: { label: string; children: ReactNode }) {
@@ -1896,6 +2227,26 @@ function NodeInspectorPanel({
   slice: GraphSlice | null;
   onInspectIssue: (issueId: string) => void;
 }) {
+  const model = useNodeInspectorModel(node, issues, slice);
+
+  if (!node || !model) {
+    return <EmptyNodeInspectorPanel slice={slice} />;
+  }
+
+  return <SelectedNodeInspectorPanel model={model} onInspectIssue={onInspectIssue} />;
+}
+
+type NodeInspectorModel = {
+  node: GraphNode;
+  incoming: GraphEdge[];
+  outgoing: GraphEdge[];
+  nodeLookup: Map<string, GraphNode>;
+  metadataRows: Array<[string, GraphNode["metadata"][string]]>;
+  runtimeRows: { label: string; value: string }[];
+  issues: IssueSignal[];
+};
+
+function useNodeInspectorModel(node: GraphNode | null, issues: IssueSignal[], slice: GraphSlice | null): NodeInspectorModel | null {
   const incoming = node && slice ? slice.edges.filter((edge) => edge.target === node.id) : [];
   const outgoing = node && slice ? slice.edges.filter((edge) => edge.source === node.id) : [];
   const nodeLookup = useMemo(() => new Map((slice?.nodes ?? []).map((item) => [item.id, item])), [slice]);
@@ -1903,55 +2254,100 @@ function NodeInspectorPanel({
   const runtimeRows = node?.kind === "runtime" ? runtimeDetailRows(node) : [];
 
   if (!node) {
-    return (
-      <div className="atlas-panel-stack">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Inspector</p>
-          <h3 className="mt-2 text-lg font-semibold">Select a node</h3>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">Drag nodes to reorganize the canvas. Select any node to inspect its file, connections, metadata, and related issue signals.</p>
-        </div>
-        <div className="atlas-inspector-grid">
-          <MiniMetric label="Nodes" value={slice?.nodes.length ?? 0} />
-          <MiniMetric label="Edges" value={slice?.edges.length ?? 0} />
-          <MiniMetric label="Signals" value={slice?.issues.length ?? 0} />
-        </div>
-      </div>
-    );
+    return null;
   }
 
+  return { node, incoming, outgoing, nodeLookup, metadataRows, runtimeRows, issues };
+}
+
+function EmptyNodeInspectorPanel({ slice }: { slice: GraphSlice | null }) {
   return (
     <div className="atlas-panel-stack">
-      <div className="space-y-2">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Selected Node</p>
-        <h3 className="break-words text-lg font-semibold">{node.label}</h3>
-        <span className="atlas-node-kind">{node.kind}</span>
+      <div>
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Inspector</p>
+        <h3 className="mt-2 text-lg font-semibold">Select a node</h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">Drag nodes to reorganize the canvas. Select any node to inspect its file, connections, metadata, and related issue signals.</p>
       </div>
-
-      <div className="atlas-inspector-section">
-        <h4>Location</h4>
-        <p>{node.filePath ?? "Graph-level node"}</p>
-        {node.featureId ? <p>Feature: {node.featureId}</p> : null}
+      <div className="atlas-inspector-grid">
+        <MiniMetric label="Nodes" value={slice?.nodes.length ?? 0} />
+        <MiniMetric label="Edges" value={slice?.edges.length ?? 0} />
+        <MiniMetric label="Signals" value={slice?.issues.length ?? 0} />
       </div>
+    </div>
+  );
+}
 
+function SelectedNodeInspectorPanel({
+  model,
+  onInspectIssue,
+}: {
+  model: NodeInspectorModel;
+  onInspectIssue: (issueId: string) => void;
+}) {
+  return (
+    <div className="atlas-panel-stack">
+      <SelectedNodeHeader node={model.node} />
+      <NodeLocationSection node={model.node} />
       <div className="grid grid-cols-2 gap-2">
-        <MiniMetric label="Incoming" value={incoming.length} />
-        <MiniMetric label="Outgoing" value={outgoing.length} />
+        <MiniMetric label="Incoming" value={model.incoming.length} />
+        <MiniMetric label="Outgoing" value={model.outgoing.length} />
       </div>
+      <NodeConnectionsSection model={model} />
+      <NodeSignalsSection issues={model.issues} onInspectIssue={onInspectIssue} />
+      <RuntimeRowsSection rows={model.runtimeRows} />
+      <MetadataRowsSection rows={model.metadataRows} />
+    </div>
+  );
+}
 
+function SelectedNodeHeader({ node }: { node: GraphNode }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Selected Node</p>
+      <h3 className="break-words text-lg font-semibold">{node.label}</h3>
+      <span className="atlas-node-kind">{node.kind}</span>
+    </div>
+  );
+}
+
+function NodeLocationSection({ node }: { node: GraphNode }) {
+  return (
+    <div className="atlas-inspector-section">
+      <h4>Location</h4>
+      <p>{node.filePath ?? "Graph-level node"}</p>
+      {node.featureId ? <p>Feature: {node.featureId}</p> : null}
+    </div>
+  );
+}
+
+function NodeConnectionsSection({ model }: { model: NodeInspectorModel }) {
+  const edges = [...model.incoming, ...model.outgoing].slice(0, 8);
+
+  return (
       <div className="atlas-inspector-section">
         <h4>Connections</h4>
         <div className="space-y-2">
-          {[...incoming, ...outgoing].slice(0, 8).map((edge) => (
+        {edges.map((edge) => (
             <div key={edge.id} className="atlas-connection-row">
               <span>{edge.kind}</span>
-              <span className="truncate">{connectionLabel(edge, node.id, nodeLookup)}</span>
+            <span className="truncate">{connectionLabel(edge, model.node.id, model.nodeLookup)}</span>
               <span className={`atlas-edge-health atlas-edge-health-${edgeHealth(edge)}`}>{edgeHealth(edge)}</span>
             </div>
           ))}
-          {incoming.length + outgoing.length === 0 ? <p>No direct edges in this slice.</p> : null}
+        {edges.length === 0 ? <p>No direct edges in this slice.</p> : null}
         </div>
       </div>
+  );
+}
 
+function NodeSignalsSection({
+  issues,
+  onInspectIssue,
+}: {
+  issues: IssueSignal[];
+  onInspectIssue: (issueId: string) => void;
+}) {
+  return (
       <div className="atlas-inspector-section">
         <h4>Signals</h4>
         <div className="space-y-2">
@@ -1964,34 +2360,45 @@ function NodeInspectorPanel({
           {issues.length === 0 ? <p>No issue signals attached to this node.</p> : null}
         </div>
       </div>
+  );
+}
 
-      {runtimeRows.length > 0 ? (
-        <div className="atlas-inspector-section">
-          <h4>Runtime Contract</h4>
-          <div className="space-y-2">
-            {runtimeRows.map((row) => (
-              <div key={row.label} className="atlas-metadata-row">
-                <span>{row.label}</span>
-                <span>{row.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
+function RuntimeRowsSection({ rows }: { rows: { label: string; value: string }[] }) {
+  if (rows.length === 0) {
+    return null;
+  }
 
-      {metadataRows.length > 0 ? (
-        <div className="atlas-inspector-section">
-          <h4>Metadata</h4>
-          <div className="space-y-2">
-            {metadataRows.map(([key, value]) => (
-              <div key={key} className="atlas-metadata-row">
-                <span>{key}</span>
-                <span>{metadataValueLabel(value)}</span>
-              </div>
-            ))}
+  return (
+    <div className="atlas-inspector-section">
+      <h4>Runtime Contract</h4>
+      <div className="space-y-2">
+        {rows.map((row) => (
+          <div key={row.label} className="atlas-metadata-row">
+            <span>{row.label}</span>
+            <span>{row.value}</span>
           </div>
-        </div>
-      ) : null}
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MetadataRowsSection({ rows }: { rows: Array<[string, GraphNode["metadata"][string]]> }) {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="atlas-inspector-section">
+      <h4>Metadata</h4>
+      <div className="space-y-2">
+        {rows.map(([key, value]) => (
+          <div key={key} className="atlas-metadata-row">
+            <span>{key}</span>
+            <span>{metadataValueLabel(value)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

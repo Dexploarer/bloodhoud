@@ -1,8 +1,14 @@
 import { stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
+import { buildGraphSlice } from "@/indexer/slices";
 import { Logger } from "@/lib/logger";
 import { isJsonObject, readJsonObject, stringArrayFromJson, stringFromJson } from "@/lib/atlas/json";
-import type { JsonObject, ProjectConfig } from "@/lib/atlas/types";
+import { AtlasStore, createEmptySummary } from "@/lib/atlas/storage";
+import type { GraphSlice, GraphSliceKind, JsonObject, ProjectConfig } from "@/lib/atlas/types";
+
+export type ProjectRouteContext = {
+  params: Promise<{ projectId: string }>;
+};
 
 export function errorResponse(source: string, error: Error, status = 500): Response {
   Logger.error(source, error.message, { status });
@@ -43,6 +49,28 @@ export function graphSliceParams(request: Request): { kind: string; target: stri
     kind: url.searchParams.get("kind") ?? "overview",
     target: url.searchParams.get("target"),
   };
+}
+
+export async function graphSliceFromPostBody(request: Request, ctx: ProjectRouteContext): Promise<GraphSlice | Response> {
+  const { projectId } = await ctx.params;
+  const body = await readJsonObject(request);
+  const kind = stringFromJson(body.kind) ?? "overview";
+  const target = stringFromJson(body.target);
+  const store = new AtlasStore();
+  const project = store.getProject(projectId);
+
+  if (!project) {
+    return Response.json({ error: "Project not found." }, { status: 404 });
+  }
+
+  return buildGraphSlice(
+    kind as GraphSliceKind,
+    target,
+    store.getNodes(projectId),
+    store.getEdges(projectId),
+    store.getIssues(projectId),
+    store.getLatestSummary(projectId) ?? createEmptySummary(project),
+  );
 }
 
 function readIgnorePatterns(body: JsonObject, existing?: ProjectConfig): string[] {

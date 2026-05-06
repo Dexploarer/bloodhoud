@@ -15,8 +15,8 @@ The app is local-first. Source stays on the machine, scans are evidence-based, a
 ## Development
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
@@ -24,8 +24,8 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Verification
 
 ```bash
-npm run typecheck
-npm test
-npm run lint
-npm run build
+bun run typecheck
+bun run test
+bun run lint
+bun run build
 ```

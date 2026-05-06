@@ -510,7 +510,7 @@ function buildLocalDocs(slice: GraphSlice, setupReason: string): AiGeneratedDoc[
         "## Local API review",
         "- Set `OPENAI_API_KEY` in the server environment.",
         "- Optionally set `OPENAI_MODEL`; otherwise Bloodhoud uses `gpt-5.5`.",
-        "- Restart `npm run dev` after changing environment variables.",
+        "- Restart `bun run dev` after changing environment variables.",
         "",
         "## ChatGPT app path",
         "- Convert Bloodhoud into an Apps SDK app with an MCP server.",
